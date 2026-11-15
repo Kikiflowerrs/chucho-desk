@@ -1,8 +1,8 @@
-// Service worker v7: offline shell only, never touches the data path, never rewrites the page URL (the ?d= query passes
+// Service worker v8: offline shell only, never touches the data path, never rewrites the page URL (the ?d= query passes
 // through untouched), and never hands Safari a redirected response ("Response served by service worker has redirections").
 // Web Push handlers exist for plan A; this desk runs plan B (Telegram only).
-const CACHE = "desk-v7";
-const SHELL = ["index.html", "app.css?v=7", "app.js?v=7", "chart.js?v=7", "manifest.json?v=7",
+const CACHE = "desk-v8";
+const SHELL = ["index.html", "app.css?v=8", "app.js?v=8", "chart.js?v=8", "manifest.json?v=8",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
 self.addEventListener("install", e => {
   self.skipWaiting();
@@ -24,7 +24,7 @@ self.addEventListener("fetch", e => {
   // never intercept or cache data, the API, or the SSE stream (also skip by Accept)
   if (u.pathname.includes("/d/") || u.pathname.includes("/api/") || u.pathname.includes("/api/stream")) return;
   if ((req.headers.get("Accept") || "").includes("text/event-stream")) return;
-  if (u.hostname.includes("trycloudflare.com") || u.pathname.endsWith("/stream")) return;
+  if (u.hostname.includes("trycloudflare.com") || u.hostname.includes("ntfy.sh") || u.pathname.endsWith("/stream") || u.pathname.endsWith("/sse")) return;
   if (req.mode === "navigate") {
     // network first, same URL (query kept); offline -> cached index.html
     e.respondWith(fetch(req).then(clean).then(r => {

@@ -1,5 +1,5 @@
 // Plan A: #t=APP_TOKEN -> /api/*. Plan B: #d=DATA_PATH -> ./d/{DATA_PATH}/*.json.
-// Real-time: EventSource to streamUrl (published in the JSON) /api/stream?d= or ?t=. Falls back to polling if the stream is down.
+// Real-time: EventSource to streamUrl from the private JSON (local /api/stream or ntfy.sh SSE). Falls back to polling if the stream is down.
 const STALE_S = location.hostname.endsWith('github.io') ? 420 : 90;
 (() => {
 "use strict";
@@ -118,7 +118,7 @@ async function get(kind, arg) {
 }
 
 // ---- global state ----
-const S = {state: null, chart: null, activity: null, account: null, live: null, review: null, range: "1D", lastOk: null, err: null, retryIn: 0, loaded: false, seenPushes: +store.get("seen") || 0, prevOdo: null, seenFeed: null, recapShown: store.get("recap_shown") || "", liveMode: "poll", streamUrl: null, streamOk: 0};
+const S = {state: null, chart: null, activity: null, account: null, live: null, review: null, range: "1D", lastOk: null, err: null, retryIn: 0, loaded: false, seenPushes: +store.get("seen") || 0, prevOdo: null, seenFeed: null, recapShown: store.get("recap_shown") || "", liveMode: "poll", streamUrl: null, streamKind: null, streamOk: 0};
 const POLL = 8;
 let retryTimer = null;
 let es = null, esTimer = null, esBackoff = 1000, pollTimer = null;
@@ -132,10 +132,24 @@ function streamBase() {
 function applySnapshot(data) {
   if (!data || typeof data !== "object") return;
   if (data.streamUrl) S.streamUrl = data.streamUrl;
+  if (data.streamKind) S.streamKind = data.streamKind;
   if (data.live) S.live = data.live;
   if (data.state) S.state = Object.assign(S.state || {}, data.state);
-  if (!data.live && data.balance != null && (data.feed || data.agents || data.openPositions)) {
-    S.live = Object.assign(S.live || {}, data);
+  // compact ntfy snapshot: merge fields into S.live without wiping the full poll payload
+  if (!data.live) {
+    const patch = {};
+    if (data.balance != null) patch.balance = data.balance;
+    if (data.mode) patch.mode = data.mode;
+    if (data.todayUsd != null) patch.todayUsd = data.todayUsd;
+    if (data.todayPct != null) patch.todayPct = data.todayPct;
+    if (data.openCount != null) patch.openCount = data.openCount;
+    if (data.running != null) patch.running = data.running;
+    if (data.feed) patch.feed = data.feed;
+    if (data.open) patch.openPositions = data.open;
+    if (data.agents) patch.agents = data.agents;
+    if (data.openPositions) patch.openPositions = data.openPositions;
+    if (Object.keys(patch).length) S.live = Object.assign(S.live || {}, patch);
+    if (S.state && data.balance != null) S.state.balance = data.balance;
   }
   if (S.live && data.streamUrl) S.live.streamUrl = data.streamUrl;
   if (S.state && data.streamUrl) S.state.streamUrl = data.streamUrl;
@@ -145,6 +159,19 @@ function applySnapshot(data) {
   hideErr();
   maybeToast(S.live || S.state);
   render();
+}
+function prependFeed(data, kind) {
+  if (!data) return;
+  const item = {
+    ts: data.ts || Date.now() / 1000,
+    kind: (kind || data.k || data.kind || "event").toLowerCase(),
+    text: data.text || [data.action || kind, data.name || data.symbol || "", data.reason].filter(Boolean).join(" · "),
+    mint: data.mint, name: data.name, symbol: data.symbol, reason: data.reason, trader: data.trader, tone: data.tone || kind
+  };
+  if (!item.text && !item.mint) return;
+  S.live = S.live || {};
+  const feed = S.live.feed || [];
+  S.live.feed = [item].concat(feed).slice(0, 80);
 }
 function toastEvent(kind, data) {
   if (!data) return;
@@ -163,24 +190,68 @@ function toastEvent(kind, data) {
     liveToast("🚀 " + (text || "Dip"));
   }
 }
+function applyRelayEvent(data) {
+  if (!data || typeof data !== "object") return;
+  if (data.k === "batch" && Array.isArray(data.events)) {
+    data.events.forEach(applyRelayEvent);
+    return;
+  }
+  const kind = data.k || data.kind || "message";
+  onStreamEvent(kind, data);
+}
 function onStreamEvent(kind, data) {
   S.streamOk = Date.now();
   S.liveMode = "stream";
   esBackoff = 1000;
   if (data && data.streamUrl) S.streamUrl = data.streamUrl;
-  if (kind === "snapshot" || kind === "heartbeat") applySnapshot(data);
+  if (data && data.streamKind) S.streamKind = data.streamKind;
+  const k = (kind || "").toLowerCase();
+  if (k === "snapshot" || k === "heartbeat" || k === "hb") applySnapshot(data);
   else {
-    toastEvent(kind, data);
-    // snapshot usually follows immediately; if not, keep last view until it does
+    prependFeed(data, k);
+    if (data && data.balance != null) {
+      S.live = Object.assign(S.live || {}, {balance: data.balance});
+      if (S.state) S.state.balance = data.balance;
+    }
+    toastEvent(k, data);
+    render();
   }
   paintLiveBadge();
+}
+function handleNtfyFrame(ev) {
+  if (!ev || !ev.data) {
+    S.streamOk = Date.now(); S.liveMode = "stream"; paintLiveBadge();
+    return;
+  }
+  let wrap;
+  try { wrap = JSON.parse(ev.data); } catch (e) { return; }
+  let payload = wrap;
+  if (wrap && typeof wrap.message === "string") {
+    try { payload = JSON.parse(wrap.message); } catch (e) { return; }
+  }
+  if (wrap && wrap.event === "open") {
+    S.streamOk = Date.now(); S.liveMode = "stream"; paintLiveBadge();
+    return;
+  }
+  applyRelayEvent(payload);
 }
 function closeStream() {
   if (es) { try { es.close(); } catch (e) {} es = null; }
 }
+function streamKindOf(base) {
+  return (S.live && S.live.streamKind) || (S.state && S.state.streamKind) || S.streamKind ||
+    (/ntfy\.sh\//i.test(base || "") ? "ntfy" : (base ? "tunnel" : ""));
+}
 function streamRequestUrl(base) {
+  if (!base) return "";
+  const kind = streamKindOf(base);
+  if (kind === "ntfy" || /ntfy\.sh\//i.test(base)) {
+    let u = String(base).replace(/\/$/, "");
+    if (!/\/sse$/.test(u)) u += "/sse";
+    return u;
+  }
   const tok = TOKEN || DP;
-  if (!base || !tok) return "";
+  if (!tok) return "";
   const q = TOKEN ? "t=" : "d=";
   return String(base).replace(/\/$/, "") + "/api/stream?" + q + encodeURIComponent(tok);
 }
@@ -192,19 +263,26 @@ function openStream() {
   let src;
   try { src = new EventSource(url); } catch (e) { scheduleReconnect(); return; }
   es = src;
-  ["snapshot","heartbeat","fill","exit","signal","terminal","mirror","scan","verdict","balance","agent","enter"].forEach(k => {
-    src.addEventListener(k, ev => {
-      if (src !== es) return;
-      try { onStreamEvent(k, JSON.parse(ev.data)); } catch (e) {}
+  const ntfy = streamKindOf(streamBase()) === "ntfy" || /ntfy\.sh\//i.test(url);
+  if (ntfy) {
+    src.addEventListener("message", ev => { if (src !== es) return; handleNtfyFrame(ev); });
+    src.addEventListener("open", ev => { if (src !== es) return; handleNtfyFrame(ev); });
+    src.onmessage = ev => { if (src !== es) return; handleNtfyFrame(ev); };
+  } else {
+    ["snapshot","heartbeat","fill","exit","signal","terminal","mirror","scan","verdict","balance","agent","enter"].forEach(k => {
+      src.addEventListener(k, ev => {
+        if (src !== es) return;
+        try { onStreamEvent(k, JSON.parse(ev.data)); } catch (e) {}
+      });
     });
-  });
-  src.onmessage = ev => {
-    if (src !== es) return;
-    try {
-      const d = JSON.parse(ev.data);
-      onStreamEvent(d.kind || "message", d);
-    } catch (e) {}
-  };
+    src.onmessage = ev => {
+      if (src !== es) return;
+      try {
+        const d = JSON.parse(ev.data);
+        onStreamEvent(d.kind || "message", d);
+      } catch (e) {}
+    };
+  }
   src.onopen = () => { if (src !== es) return; esBackoff = 1000; S.streamOk = Date.now(); S.liveMode = "stream"; paintLiveBadge(); };
   src.onerror = () => {
     if (src !== es) return;
@@ -228,6 +306,8 @@ async function refresh() {
     S.state = st; S.chart = ch; S.activity = ac; S.account = acc; S.live = lv; S.loaded = true;
     if ((lv && lv.streamUrl) || (st && st.streamUrl)) {
       const next = (lv && lv.streamUrl) || st.streamUrl;
+      const kind = (lv && lv.streamKind) || (st && st.streamKind) || S.streamKind;
+      if (kind) S.streamKind = kind;
       if (next && next !== S.streamUrl) { S.streamUrl = next; closeStream(); }
     }
     maybeToast(lv || st);

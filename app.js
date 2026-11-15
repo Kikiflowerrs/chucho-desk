@@ -129,9 +129,10 @@ function card(a, full) {
   const n = a.name, title = n[0].toUpperCase() + n.slice(1); let body = "";
   if (n === "scanner") {
     const feed = (a.feed || []).map(f => f.verdict === "kill"
-      ? `<div class="k">${esc(f.name)} <i>${esc(f.reason)}</i></div>`
-      : `<div>${esc(f.name)} · liq ${kfmt(f.liquidity_usd)} · → auditor</div>`).join("");
-    body = `<div class="meta" style="color:${ACOL.scanner}">${a.pools} pools</div><div class="feed">${feed || `<div class="sub">Listening for graduations</div>`}</div>`;
+      ? `<div class="k">${esc(f.name)} <i>${esc(f.reason)}</i>${laneTag(f.lane === "established" ? "established" : "")}</div>`
+      : f.verdict === "wait" ? `<div class="sub">${esc(f.name)} · ${esc(f.reason)}${laneTag("established")}</div>`
+      : `<div>${esc(f.name)} · liq ${kfmt(f.liquidity_usd)} · → auditor${laneTag(f.lane)}</div>`).join("");
+    body = `<div class="meta" style="color:${ACOL.scanner}">${a.pools} pools${a.estPools ? ` · ${a.estPools} established (${a.estPassed || 0} passed)` : ""}</div><div class="feed">${feed || `<div class="sub">Listening for graduations</div>`}</div>`;
   } else if (n === "auditor") {
     const L = a.last ? a.last.layers : [];
     const strips = [...Array(8).keys()].map(i => { const l = L[i]; return `<div class="strip ${l ? (l.pass === true ? "ok" : l.pass === false ? "no" : "") : ""}"></div>`; }).join("");
@@ -165,13 +166,20 @@ function card(a, full) {
 }
 function paintRings(root) { root.querySelectorAll("canvas.ring").forEach(c => Charts.ring(c, c.dataset.score === "" ? null : +c.dataset.score)); }
 
+// ---- lane label: 'new' (fresh pump.fun migrations) vs 'established' (>= 7d old coins from DexScreener) ----
+function laneTag(l) {
+  if (!l) return "";
+  const est = l === "established";
+  return `<span class="lane" style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:2px;` +
+    `background:${est ? "rgba(10,132,255,.18)" : "rgba(48,209,88,.16)"};color:${est ? "#0a84ff" : "#30d158"}">${est ? "ESTABLISHED" : "NEW"}</span>`;
+}
 // ---- activity rows ----
 function rowHtml(r) {
   const col = {bought: "var(--blue)", sold: "var(--green)", stopped: "var(--red)", rejected: "var(--c2)", x_signal: "#ff9f0a"}[r.kind] || "var(--c2)";
   const href = r.kind === "rejected" ? `#/audit/${r.mint}` : `#/coin/${r.mint}`;
   const vcls = r.kind === "sold" && String(r.value).startsWith("+") ? "up" : (r.kind === "stopped" || String(r.value).startsWith("-")) ? "down" : "";
   return `<a class="row" href="${href}"><div class="ic" style="background:${col}">${esc((r.title || "?").split(" ")[1]?.[0] || "?")}</div>
-    <div class="tx"><div class="tt">${esc(r.title)}</div><div class="st">${esc(r.subtitle)}</div></div><div class="vv ${vcls}">${esc(r.value)}</div></a>`;
+    <div class="tx"><div class="tt">${esc(r.title)} ${laneTag(r.lane)}</div><div class="st">${esc(r.subtitle)}</div></div><div class="vv ${vcls}">${esc(r.value)}</div></a>`;
 }
 
 // ---- screens ----
@@ -253,7 +261,7 @@ async function Coin(v, mint) {
   const left = p ? Math.max(0, p.timeoutAt - Date.now() / 1000) : 0;
   v.innerHTML = `<div class="header"><a class="back" href="javascript:history.back()">‹ Back</a><span style="margin-left:auto">${paperPill()}</span></div>
     <div style="display:flex;align-items:center;gap:8px"><div class="title" style="margin:0">${esc(c.name || mint.slice(0, 6))}</div>${c.shield ? `<a class="chip" href="#/audit/${mint}">🛡 ${esc(c.shield)}</a>` : ""}</div>
-    <div class="sub">${esc(c.symbol || "")} · Solana · ${age(c.migratedAt)}</div>
+    <div class="sub">${esc(c.symbol || "")} · Solana · ${c.lane === "established" ? "established lane" : age(c.migratedAt)} ${laneTag(c.lane)}</div>
     <div class="price num" style="margin-top:10px">${px(c.price)}</div>
     ${since != null ? `<div class="${since >= 0 ? "up" : "down"}">${since >= 0 ? "▲" : "▼"} ${Math.abs(since).toFixed(2)}% since entry</div>` : ""}
     <div class="chartbox" style="height:220px;margin-top:10px"><canvas id="candles"></canvas></div>

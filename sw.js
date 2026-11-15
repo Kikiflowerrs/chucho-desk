@@ -1,6 +1,8 @@
 // Service worker: offline shell only. Web Push handlers exist for plan A; this desk runs plan B (Telegram only).
-const SHELL = ["./", "index.html", "app.css", "app.js", "chart.js", "manifest.json"];
-const CACHE = "desk-v2";
+const SHELL = ["./", "index.html", "app.css", "app.js", "chart.js", "manifest.json",
+  "icons/icon-192.png", "icons/icon-512.png", "icons/icon-192-maskable.png",
+  "icons/icon-512-maskable.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
+const CACHE = "desk-v3";
 self.addEventListener("install", e => { self.skipWaiting(); e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL))); });
 self.addEventListener("activate", e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 self.addEventListener("fetch", e => {
@@ -12,6 +14,6 @@ self.addEventListener("fetch", e => {
 });
 self.addEventListener("push", e => {
   const d = e.data ? e.data.json() : {};
-  e.waitUntil(self.registration.showNotification("Chucho Desk · now", {body: d.text || "", data: {url: d.url}, icon: "icons/icon-192.png"}));
+  e.waitUntil(self.registration.showNotification("Chucho Desk · ahora", {body: d.text || "", data: {url: d.url}, icon: "icons/icon-192.png"}));
 });
 self.addEventListener("notificationclick", e => { e.notification.close(); if (e.notification.data && e.notification.data.url) clients.openWindow(e.notification.data.url); });

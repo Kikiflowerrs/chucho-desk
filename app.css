@@ -102,3 +102,47 @@ body.has-err main{padding-top:36px}
 .price{font:700 44px var(--display)}
 @media (prefers-reduced-motion:reduce){.odo-s,.beam,.disc,.switch i{transition:none!important}.skel{animation:none}}
 .acard{border-radius:calc((100vw - 32px) * 42 / 504)}
+
+.btn.orange{background:var(--orange);color:#000}
+.kill-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.kill-grid .btn{margin:0;height:44px;font-size:15px}
+.banner{background:rgba(255,159,10,.16);color:var(--orange);border-radius:12px;padding:10px 14px;margin:8px 0 12px;font-size:15px;font-weight:600}
+
+/* —— refresh: monitoring cards, signals, confirm, kill zone —— */
+.updated{color:var(--t3);font-size:12px;margin:2px 0 8px}
+.today-amt{font:700 22px/1.15 var(--display);letter-spacing:-.3px}
+.pos-card{background:var(--c1);border-radius:16px;padding:16px;margin-bottom:10px;display:block}
+.pos-card .pos-top{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.pos-card .pos-name{font:700 20px var(--display);flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pos-card .pos-pnl{font:700 22px var(--display);letter-spacing:-.3px;white-space:nowrap}
+.pos-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
+.pos-metrics div{background:var(--c2);border-radius:12px;padding:10px 8px;min-width:0}
+.pos-metrics span{display:block;color:var(--t2);font-size:12px;margin-bottom:4px}
+.pos-metrics b{display:block;font:700 15px/1.2 var(--mono);word-break:break-all}
+.pos-size{color:var(--t2);font-size:13px;margin-top:2px}
+.sig-list{display:flex;flex-direction:column;gap:0}
+.sig-row{display:flex;align-items:flex-start;gap:10px;padding:12px 16px;min-height:60px;border-bottom:.5px solid var(--sep)}
+.sig-row:last-child{border-bottom:0}
+.badge{display:inline-flex;align-items:center;justify-content:center;height:22px;padding:0 8px;border-radius:8px;font:700 11px/1 var(--text);letter-spacing:.02em;flex:none;margin-top:2px}
+.badge.enter{background:rgba(0,211,90,.16);color:var(--green)}
+.badge.skip{background:rgba(255,69,58,.16);color:var(--red)}
+.tag{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:11px;font-size:12px;font-weight:600;margin-left:6px;vertical-align:2px}
+.tag.copy{background:rgba(100,210,255,.16);color:var(--cyan)}
+.lane{font-size:11px;font-weight:600;padding:1px 7px;border-radius:8px;margin-left:4px;vertical-align:2px}
+.kill-zone{background:var(--c1);border:1px solid rgba(255,69,58,.45);border-radius:16px;padding:16px;margin:16px 0 20px}
+.kill-zone .kz-head{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.kill-zone .kz-title{font:700 17px var(--display);color:var(--red)}
+.confirm{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:40;display:flex;align-items:flex-end;justify-content:center;padding:16px 16px calc(16px + env(safe-area-inset-bottom))}
+.confirm[hidden]{display:none}
+.confirm-card{background:var(--c1);border-radius:20px;padding:20px;width:100%;max-width:420px;margin-bottom:72px}
+.confirm-title{font:700 20px var(--display);margin-bottom:8px}
+.confirm-body{color:var(--t2);font-size:15px;margin-bottom:16px}
+.confirm-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.confirm-actions .btn{margin:0}
+.install{background:var(--c1);border-radius:16px;padding:14px 16px;margin:0 0 12px;color:var(--t2);font-size:14px;line-height:1.4}
+.review-card .row{align-items:flex-start}
+@media (max-width:430px){
+  .balance{font-size:58px;height:64px}
+  .odo-d,.odo-s span{height:58px;line-height:58px}
+  .chartbox{height:180px}
+}

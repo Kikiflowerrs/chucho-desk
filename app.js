@@ -1,6 +1,6 @@
-// hosted static copies refresh every ~2 min + deploy lag, local refreshes every 10s
+// Plan A: #t=APP_TOKEN -> /api/*. Plan B: #d=DATA_PATH -> ./d/{DATA_PATH}/*.json.
+// Real-time: EventSource to streamUrl (published in the JSON) /api/stream?d= or ?t=. Falls back to polling if the stream is down.
 const STALE_S = location.hostname.endsWith('github.io') ? 420 : 90;
-// Chucho Desk app. Plain JS. Plan A: #t=APP_TOKEN -> /api/*. Plan B: #d=DATA_PATH -> ./d/{DATA_PATH}/*.json (polled every 10s).
 (() => {
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
@@ -118,21 +118,125 @@ async function get(kind, arg) {
 }
 
 // ---- global state ----
-const S = {state: null, chart: null, activity: null, account: null, live: null, review: null, range: "1D", lastOk: null, err: null, retryIn: 0, loaded: false, seenPushes: +store.get("seen") || 0, prevOdo: null, seenFeed: null, recapShown: store.get("recap_shown") || ""};
+const S = {state: null, chart: null, activity: null, account: null, live: null, review: null, range: "1D", lastOk: null, err: null, retryIn: 0, loaded: false, seenPushes: +store.get("seen") || 0, prevOdo: null, seenFeed: null, recapShown: store.get("recap_shown") || "", liveMode: "poll", streamUrl: null, streamOk: 0};
 const POLL = 8;
 let retryTimer = null;
+let es = null, esTimer = null, esBackoff = 1000, pollTimer = null;
+
+function streamIsLive() {
+  return S.liveMode === "stream" && S.streamOk && (Date.now() - S.streamOk) < 20000;
+}
+function streamBase() {
+  return (S.live && S.live.streamUrl) || (S.state && S.state.streamUrl) || S.streamUrl || "";
+}
+function applySnapshot(data) {
+  if (!data || typeof data !== "object") return;
+  if (data.streamUrl) S.streamUrl = data.streamUrl;
+  if (data.live) S.live = data.live;
+  if (data.state) S.state = Object.assign(S.state || {}, data.state);
+  if (!data.live && data.balance != null && (data.feed || data.agents || data.openPositions)) {
+    S.live = Object.assign(S.live || {}, data);
+  }
+  if (S.live && data.streamUrl) S.live.streamUrl = data.streamUrl;
+  if (S.state && data.streamUrl) S.state.streamUrl = data.streamUrl;
+  S.loaded = true;
+  S.lastOk = Date.now();
+  S.err = null;
+  hideErr();
+  maybeToast(S.live || S.state);
+  render();
+}
+function toastEvent(kind, data) {
+  if (!data) return;
+  const name = data.symbol || data.name || "";
+  const k = (kind || data.action || data.kind || "").toLowerCase();
+  const text = data.reason || data.text || "";
+  if (k === "fill" || k === "enter" || k === "bought") {
+    const amt = String(text).match(/\$[0-9.]+/);
+    liveToast("✅ Compré " + (amt ? amt[0] : "") + (name ? " · " + name : ""));
+  } else if (k === "exit" || k === "sold" || k === "stop" || k === "tp") {
+    const amt = String(text).match(/[+−$-][0-9$.]+/);
+    liveToast("✅ Vendí " + (amt ? amt[0] : "") + (name ? " · " + name : ""));
+  } else if (k === "mirror") {
+    liveToast("🚀 " + (text || "Movimiento del espejo"));
+  } else if (k === "dip") {
+    liveToast("🚀 " + (text || "Dip"));
+  }
+}
+function onStreamEvent(kind, data) {
+  S.streamOk = Date.now();
+  S.liveMode = "stream";
+  esBackoff = 1000;
+  if (data && data.streamUrl) S.streamUrl = data.streamUrl;
+  if (kind === "snapshot" || kind === "heartbeat") applySnapshot(data);
+  else {
+    toastEvent(kind, data);
+    // snapshot usually follows immediately; if not, keep last view until it does
+  }
+  paintLiveBadge();
+}
+function closeStream() {
+  if (es) { try { es.close(); } catch (e) {} es = null; }
+}
+function streamRequestUrl(base) {
+  const tok = TOKEN || DP;
+  if (!base || !tok) return "";
+  const q = TOKEN ? "t=" : "d=";
+  return String(base).replace(/\/$/, "") + "/api/stream?" + q + encodeURIComponent(tok);
+}
+function openStream() {
+  const url = streamRequestUrl(streamBase());
+  if (!url) return;
+  if (es && es.url === url && es.readyState !== 2) return;
+  closeStream();
+  let src;
+  try { src = new EventSource(url); } catch (e) { scheduleReconnect(); return; }
+  es = src;
+  ["snapshot","heartbeat","fill","exit","signal","terminal","mirror","scan","verdict","balance","agent","enter"].forEach(k => {
+    src.addEventListener(k, ev => {
+      if (src !== es) return;
+      try { onStreamEvent(k, JSON.parse(ev.data)); } catch (e) {}
+    });
+  });
+  src.onmessage = ev => {
+    if (src !== es) return;
+    try {
+      const d = JSON.parse(ev.data);
+      onStreamEvent(d.kind || "message", d);
+    } catch (e) {}
+  };
+  src.onopen = () => { if (src !== es) return; esBackoff = 1000; S.streamOk = Date.now(); S.liveMode = "stream"; paintLiveBadge(); };
+  src.onerror = () => {
+    if (src !== es) return;
+    closeStream();
+    if (Date.now() - (S.streamOk || 0) > 8000) S.liveMode = "poll";
+    paintLiveBadge();
+    scheduleReconnect();
+  };
+}
+function scheduleReconnect() {
+  clearTimeout(esTimer);
+  const wait = esBackoff;
+  esBackoff = Math.min(esBackoff * 2, 15000);
+  esTimer = setTimeout(openStream, wait);
+}
 
 async function refresh() {
   if (!TOKEN && !DP) { render(); return; }
   try {
     const [st, ch, ac, acc, lv] = await Promise.all([get("state"), get("chart", S.range), get("activity"), get("account"), get("live")]);
     S.state = st; S.chart = ch; S.activity = ac; S.account = acc; S.live = lv; S.loaded = true;
+    if ((lv && lv.streamUrl) || (st && st.streamUrl)) {
+      const next = (lv && lv.streamUrl) || st.streamUrl;
+      if (next && next !== S.streamUrl) { S.streamUrl = next; closeStream(); }
+    }
     maybeToast(lv || st);
-    const stale = st && st.ts && (Date.now() / 1000 - st.ts) > STALE_S;
+    const stale = st && st.ts && (Date.now() / 1000 - st.ts) > STALE_S && !streamIsLive();
     if (stale) throw Object.assign(new Error("stale"), {lastTs: st.ts});
     S.lastOk = Date.now(); S.err = null; hideErr();
+    if (streamBase()) openStream();
   } catch (e) {
-    S.err = e; if (e.lastTs) S.lastOk = e.lastTs * 1000; showErr();
+    S.err = e; if (e.lastTs) S.lastOk = e.lastTs * 1000; if (!streamIsLive()) showErr();
   }
   render();
 }
@@ -184,8 +288,26 @@ function freshText(ts) {
   return s < 60 ? `actualizado hace ${s}s` : s < 3600 ? `actualizado hace ${Math.floor(s / 60)} min` : `actualizado hace ${(s / 3600).toFixed(0)} h`;
 }
 function updatedLine(st) {
-  if (!st || !st.ts) return "";
-  return `<div class="fresh" id="fresh">${freshText(st.ts)}</div>`;
+  if (streamIsLive()) return `<div class="fresh" id="fresh">EN VIVO · tiempo real</div>`;
+  if (!st || !st.ts) return `<div class="fresh" id="fresh">modo lento</div>`;
+  return `<div class="fresh" id="fresh">${freshText(st.ts)} · modo lento</div>`;
+}
+function liveBadgeHtml() {
+  return streamIsLive()
+    ? `<span class="live-badge"><i></i> EN VIVO · tiempo real</span>`
+    : `<span class="live-badge slow"><i></i> modo lento</span>`;
+}
+function paintLiveBadge() {
+  const b = document.querySelector(".live-badge");
+  if (b) b.outerHTML = liveBadgeHtml();
+  const el = document.getElementById("fresh");
+  if (el) {
+    if (streamIsLive()) el.textContent = "EN VIVO · tiempo real";
+    else {
+      const ts = (S.live && S.live.ts) || (S.state && S.state.ts);
+      el.textContent = ts ? (freshText(ts) + " · modo lento") : "modo lento";
+    }
+  }
 }
 
 function sourceOf(o) {
@@ -396,7 +518,7 @@ function headBar(title, backHref) {
     <a class="back-arr" href="${backHref || "#/home"}" aria-label="Atrás">‹</a>
     <div class="live-title">${esc(title)} <span class="live-dot" aria-hidden="true"></span></div>
     <div class="live-tools">
-      <span class="live-badge"><i></i> EN VIVO</span>
+      ${liveBadgeHtml()}
       <button class="theme-btn" id="themebtn" type="button" aria-label="Cambiar tema">${dark ? "☀️" : "🌙"}</button>
     </div>
   </div>`;
@@ -786,7 +908,14 @@ async function Auditor(v, mint) {
   step();
 }
 
-refresh(); setInterval(refresh, POLL * 1000);
-setInterval(() => { const el = document.getElementById('fresh'); const ts = (S.live && S.live.ts) || (S.state && S.state.ts); if (el && ts) el.textContent = freshText(ts); }, 1000);
+function pollLoop() {
+  clearTimeout(pollTimer);
+  refresh().finally(() => {
+    const ms = streamIsLive() ? 60000 : POLL * 1000;
+    pollTimer = setTimeout(pollLoop, ms);
+  });
+}
+pollLoop();
+setInterval(() => { paintLiveBadge(); }, 1000);
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => r.update && r.update()).catch(() => {});
 })();

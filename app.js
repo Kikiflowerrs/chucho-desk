@@ -1,3 +1,5 @@
+// hosted static copies refresh every ~2 min + deploy lag, local refreshes every 15s
+const STALE_S = location.hostname.endsWith('github.io') ? 420 : 90;
 // Grok Bot desk app. Plain JS. Plan A: #t=APP_TOKEN -> /api/*. Plan B: #d=DATA_PATH -> ./d/{DATA_PATH}/*.json (polled every 15s).
 (() => {
 "use strict";
@@ -42,7 +44,7 @@ async function refresh() {
   try {
     const [st, ch, ac, acc] = await Promise.all([get("state"), get("chart", S.range), get("activity"), get("account")]);
     S.state = st; S.chart = ch; S.activity = ac; S.account = acc; S.loaded = true;
-    const stale = st && st.ts && (Date.now() / 1000 - st.ts) > 90;
+    const stale = st && st.ts && (Date.now() / 1000 - st.ts) > STALE_S;
     if (stale) throw Object.assign(new Error("stale"), {lastTs: st.ts});
     S.lastOk = Date.now(); S.err = null; hideErr();
   } catch (e) {

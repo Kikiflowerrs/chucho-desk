@@ -118,7 +118,7 @@ body.has-err main{padding-top:36px}
 .pos-metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:12px}
 .pos-metrics div{background:var(--c2);border-radius:12px;padding:10px 8px;min-width:0}
 .pos-metrics span{display:block;color:var(--t2);font-size:12px;margin-bottom:4px}
-.pos-metrics b{display:block;font:700 15px/1.2 var(--mono);word-break:break-all}
+.pos-metrics b{display:block;font:700 13px/1.25 var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pos-size{color:var(--t2);font-size:13px;margin-top:2px}
 .sig-list{display:flex;flex-direction:column;gap:0}
 .sig-row{display:flex;align-items:flex-start;gap:10px;padding:12px 16px;min-height:60px;border-bottom:.5px solid var(--sep)}

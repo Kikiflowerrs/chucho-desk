@@ -167,7 +167,7 @@ function paintRings(root) { root.querySelectorAll("canvas.ring").forEach(c => Ch
 
 // ---- activity rows ----
 function rowHtml(r) {
-  const col = {bought: "var(--blue)", sold: "var(--green)", stopped: "var(--red)", rejected: "var(--c2)"}[r.kind] || "var(--c2)";
+  const col = {bought: "var(--blue)", sold: "var(--green)", stopped: "var(--red)", rejected: "var(--c2)", x_signal: "#ff9f0a"}[r.kind] || "var(--c2)";
   const href = r.kind === "rejected" ? `#/audit/${r.mint}` : `#/coin/${r.mint}`;
   const vcls = r.kind === "sold" && String(r.value).startsWith("+") ? "up" : (r.kind === "stopped" || String(r.value).startsWith("-")) ? "down" : "";
   return `<a class="row" href="${href}"><div class="ic" style="background:${col}">${esc((r.title || "?").split(" ")[1]?.[0] || "?")}</div>

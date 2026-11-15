@@ -7,19 +7,40 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// ---- credentials from the fragment (#d= / #t=) or the query (?d= / ?t=, for in-app browsers that drop fragments);
-// kept in localStorage, then stripped from the address bar ----
+// ---- credentials: read ?d= / #d= (or ?t= / #t=) FIRST, store them (localStorage + cookie fallback), then normalise the URL.
+// The ?d= stays in the address bar on purpose: iOS "Add to Home Screen" and Telegram's in-app browser each get their OWN
+// storage, so the installed app only knows the code if its start URL carries it (manifest has no start_url -> page URL is used).
+const store = {
+  get(k) { try { const v = localStorage.getItem(k); if (v) return v; } catch (e) {}
+    const m = document.cookie.match(new RegExp("(?:^|; )" + k + "=([^;]*)")); return m ? decodeURIComponent(m[1]) : null; },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {}
+    try { document.cookie = k + "=" + encodeURIComponent(v) + "; path=" + location.pathname.replace(/[^/]*$/, "") + "; max-age=31536000; SameSite=Lax" + (location.protocol === "https:" ? "; Secure" : ""); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {}
+    try { document.cookie = k + "=; path=" + location.pathname.replace(/[^/]*$/, "") + "; max-age=0"; } catch (e) {} }
+};
+function parseCode(raw) {   // accepts the full link, "?d=..", "#d=..", "d=.." or the bare code
+  raw = String(raw || "").trim(); if (!raw) return null;
+  const m = raw.match(/[?#&]?([dt])=([A-Za-z0-9_\-]{8,})/); if (m) return {k: m[1], v: m[2]};
+  if (/^[A-Za-z0-9_\-]{8,}$/.test(raw)) return {k: "d", v: raw};
+  return null;
+}
+function link(k, v) {
+  if (k === "t") { store.set("desk_t", v); store.del("desk_d"); } else { store.set("desk_d", v); store.del("desk_t"); }
+}
 (function boot() {
-  const h = location.hash.slice(1), hp = new URLSearchParams(h.includes("=") ? h : ""), qp = new URLSearchParams(location.search);
+  let h = location.hash.slice(1); if (h.charAt(0) === "/") h = "";
+  const hp = new URLSearchParams(h.includes("=") ? h : ""), qp = new URLSearchParams(location.search);
   const t = hp.get("t") || qp.get("t"), d = hp.get("d") || qp.get("d");
-  if (t) { localStorage.setItem("desk_t", t); localStorage.removeItem("desk_d"); }
-  if (d) { localStorage.setItem("desk_d", d); localStorage.removeItem("desk_t"); }
-  if (t || d) {
-    qp.delete("t"); qp.delete("d"); const rest = qp.toString();
-    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + "#/home");
-  }
+  if (t) link("t", t); else if (d) link("d", d);
+  const D = store.get("desk_d");
+  // keep (or restore) ?d= in the address bar so Add to Home Screen / reloads keep working; the hash is only the route
+  if (D && !store.get("desk_t") && qp.get("d") !== D) { qp.set("d", D); }
+  if (t) qp.delete("t");
+  const rest = qp.toString(), route0 = /^#\//.test(location.hash) ? location.hash : "#/home";
+  const want = location.pathname + (rest ? "?" + rest : "") + route0;
+  if (want !== location.pathname + location.search + location.hash) { try { history.replaceState(null, "", want); } catch (e) {} }
 })();
-const TOKEN = localStorage.getItem("desk_t"), DP = localStorage.getItem("desk_d");
+const TOKEN = store.get("desk_t"), DP = store.get("desk_d");
 const PLAN = TOKEN ? "A" : "B";
 
 async function get(kind, arg) {
@@ -41,11 +62,12 @@ async function get(kind, arg) {
 }
 
 // ---- global state ----
-const S = {state: null, chart: null, activity: null, account: null, review: null, range: "LIVE", lastOk: null, err: null, retryIn: 0, loaded: false, seenPushes: +localStorage.getItem("seen") || 0};
+const S = {state: null, chart: null, activity: null, account: null, review: null, range: "LIVE", lastOk: null, err: null, retryIn: 0, loaded: false, seenPushes: +store.get("seen") || 0};
 const POLL = 10;
 let retryTimer = null;
 
 async function refresh() {
+  if (!TOKEN && !DP) { render(); return; }
   try {
     const [st, ch, ac, acc] = await Promise.all([get("state"), get("chart", S.range), get("activity"), get("account")]);
     S.state = st; S.chart = ch; S.activity = ac; S.account = acc; S.loaded = true;
@@ -150,9 +172,27 @@ document.querySelectorAll(".tabbar button").forEach(b => b.onclick = () => { loc
 function render() {
   const r = route(), v = $("#view");
   document.querySelectorAll(".tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === r.name || (["coin", "audit"].includes(r.name) && b.dataset.tab === "home" && r.name === "coin") || (r.name === "audit" && b.dataset.tab === "agents")));
-  if (!TOKEN && !DP) { v.innerHTML = `<div class="title">Chucho Desk</div><div class="empty">Abre una vez el enlace del desk (lleva ?d=… o #d=…) para conectar este teléfono.</div>`; return; }
+  if (!TOKEN && !DP) { hideErr(); linkScreen(v); return; }
   if (!S.loaded) { v.innerHTML = skeleton(r.name); return; }
   ({home: Home, agents: Agents, activity: Activity, account: Account, coin: Coin, audit: Auditor}[r.name] || Home)(v, r.arg);
+}
+function linkScreen(v) {
+  if ($("#linkcode")) return;   // don't wipe what he is typing on the next poll
+  v.innerHTML = `<div class="title">Chucho Desk</div>
+    <div class="empty">Este teléfono todavía no está conectado. Pega aquí el enlace privado que te mandó Chucho por Telegram (o solo el código) y dale Conectar.</div>
+    <form id="linkform" class="rows" style="padding:14px;margin-top:12px" autocomplete="off">
+      <input id="linkcode" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://…/chucho-desk/?d=…"
+        style="width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:1px solid #333;background:#111;color:#fff;font-size:16px">
+      <button class="btn" type="submit" style="margin-top:10px;width:100%">Conectar</button>
+      <div id="linkmsg" class="sub" style="margin-top:8px"></div>
+    </form>`;
+  $("#linkform").onsubmit = e => {
+    e.preventDefault();
+    const c = parseCode($("#linkcode").value);
+    if (!c) { $("#linkmsg").textContent = "No reconozco ese código. Pega el enlace completo."; return; }
+    link(c.k, c.v);
+    location.replace(location.pathname + (c.k === "d" ? "?d=" + encodeURIComponent(c.v) : "") + "#/home");
+  };
 }
 function skeleton(name) {
   if (name === "home") return `<div class="navbar"></div><div class="skel" style="height:72px;width:70%;margin:8px 0"></div><div class="skel" style="height:22px;width:40%;margin-bottom:12px"></div>
@@ -312,7 +352,7 @@ function Home(v) {
   paintRings(v);
   v.querySelectorAll(".ranges button").forEach(b => b.onclick = async () => { S.range = b.dataset.r; try { S.chart = await get("chart", S.range); } catch (e) {} render(); });
   $("#sbtn").onclick = () => { $("#search").classList.toggle("on"); $("#q").focus(); };
-  $("#bell").onclick = () => { S.seenPushes = st.unread || 0; localStorage.setItem("seen", S.seenPushes); location.hash = "#/activity"; };
+  $("#bell").onclick = () => { S.seenPushes = st.unread || 0; store.set("seen", String(S.seenPushes)); location.hash = "#/activity"; };
   $("#q").oninput = async e => {
     const q = e.target.value.trim().toLowerCase(); if (!q) { $("#qres").innerHTML = ""; return; }
     let list = []; try { const c = TOKEN ? null : await get("coins"); list = c ? c.coins : []; } catch (_) {}
@@ -516,5 +556,5 @@ async function Auditor(v, mint) {
 }
 
 refresh(); setInterval(refresh, POLL * 1000);
-if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js").catch(() => {});
+if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => r.update && r.update()).catch(() => {});
 })();

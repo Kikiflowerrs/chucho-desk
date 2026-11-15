@@ -43,18 +43,73 @@ function link(k, v) {
 const TOKEN = store.get("desk_t"), DP = store.get("desk_d");
 const PLAN = TOKEN ? "A" : "B";
 
+
+function applyTheme() {
+  const t = store.get("desk_theme") || "light";
+  document.body.classList.toggle("dark", t === "dark");
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = t === "dark" ? "#000000" : "#FFFFFF";
+  return t;
+}
+function toggleTheme() {
+  store.set("desk_theme", (store.get("desk_theme") || "light") === "dark" ? "light" : "dark");
+  applyTheme();
+  const cv = document.querySelector(".hero-chart canvas, #line");
+  if (cv && cv.dataset) delete cv.dataset.drawn;
+  render();
+}
+applyTheme();
+
+function liveToast(msg) {
+  const host = $("#toasts"); if (!host || !msg) return;
+  const el = document.createElement("div"); el.className = "toast-pill"; el.textContent = msg;
+  host.appendChild(el);
+  setTimeout(() => el.remove(), 3200);
+}
+function maybeToast(live) {
+  const feed = (live && live.feed) || [];
+  if (!feed.length) return;
+  const keyOf = it => (it.ts || "") + "|" + (it.kind || "") + "|" + (it.mint || "") + "|" + (it.text || "");
+  if (S.seenFeed == null) { S.seenFeed = new Set(feed.slice(0, 12).map(keyOf)); return; }
+  const fresh = [];
+  for (const it of feed) {
+    const k = keyOf(it);
+    if (S.seenFeed.has(k)) break;
+    fresh.push(it);
+  }
+  fresh.reverse().slice(0, 4).forEach(it => {
+    const kind = (it.kind || "").toLowerCase();
+    const name = it.symbol || it.name || "";
+    if (kind === "fill" || kind === "bought" || kind === "enter") {
+      const amt = (it.text || "").match(/\$[0-9.]+/);
+      liveToast("✅ Compré " + (amt ? amt[0] : "") + (name ? " · " + name : ""));
+    } else if (kind === "exit" || kind === "sold" || kind === "stop" || kind === "tp") {
+      const amt = (it.text || "").match(/[+−$-][0-9$.]+/);
+      liveToast("✅ Vendí " + (amt ? amt[0] : "") + (name ? " · " + name : ""));
+    } else if (kind === "mirror") {
+      liveToast("🚀 " + (it.text || "Movimiento del espejo"));
+    } else if (kind === "skip" || kind === "rejected") {
+      /* keep quiet on the flood of skips */
+    } else if (kind === "dip") {
+      liveToast("🚀 " + (it.text || "Dip"));
+    }
+  });
+  feed.slice(0, 20).forEach(it => S.seenFeed.add(keyOf(it)));
+}
+
+
 async function get(kind, arg) {
   let url, opts = {cache: "no-store"};
   if (TOKEN) {
     const m = {state: "/api/state", chart: "/api/chart?range=" + (arg || "LIVE"), activity: "/api/activity", account: "/api/account",
-               coin: "/api/coin/" + arg, audit: "/api/audit/" + arg, coins: null, review: "/api/review"}[kind];
+               live: "/api/live", coin: "/api/coin/" + arg, audit: "/api/audit/" + arg, coins: null, review: "/api/review"}[kind];
     if (!m) return null; url = m; opts.headers = {Authorization: "Bearer " + TOKEN};
   } else if (DP) {
     url = `./d/${encodeURIComponent(DP)}/` + {state: "state.json", chart: "chart.json", activity: "activity.json", account: "account.json",
-           coin: `coin/${arg}.json`, audit: `audit/${arg}.json`, coins: "coins.json", review: "review.json"}[kind];
+           live: "live.json", coin: `coin/${arg}.json`, audit: `audit/${arg}.json`, coins: "coins.json", review: "review.json"}[kind];
   } else throw new Error("not linked");
   const r = await fetch(url, opts);
-  if (r.status === 404 && (kind === "coin" || kind === "audit" || kind === "review")) return null;
+  if (r.status === 404 && (kind === "coin" || kind === "audit" || kind === "review" || kind === "live")) return null;
   if (!r.ok) throw new Error("HTTP " + r.status);
   let j = await r.json();
   if (kind === "chart" && !TOKEN) j = j[arg || "LIVE"];
@@ -62,15 +117,16 @@ async function get(kind, arg) {
 }
 
 // ---- global state ----
-const S = {state: null, chart: null, activity: null, account: null, review: null, range: "LIVE", lastOk: null, err: null, retryIn: 0, loaded: false, seenPushes: +store.get("seen") || 0};
-const POLL = 10;
+const S = {state: null, chart: null, activity: null, account: null, live: null, review: null, range: "1D", lastOk: null, err: null, retryIn: 0, loaded: false, seenPushes: +store.get("seen") || 0, prevOdo: null, seenFeed: null, recapShown: store.get("recap_shown") || ""};
+const POLL = 8;
 let retryTimer = null;
 
 async function refresh() {
   if (!TOKEN && !DP) { render(); return; }
   try {
-    const [st, ch, ac, acc] = await Promise.all([get("state"), get("chart", S.range), get("activity"), get("account")]);
-    S.state = st; S.chart = ch; S.activity = ac; S.account = acc; S.loaded = true;
+    const [st, ch, ac, acc, lv] = await Promise.all([get("state"), get("chart", S.range), get("activity"), get("account"), get("live")]);
+    S.state = st; S.chart = ch; S.activity = ac; S.account = acc; S.live = lv; S.loaded = true;
+    maybeToast(lv || st);
     const stale = st && st.ts && (Date.now() / 1000 - st.ts) > STALE_S;
     if (stale) throw Object.assign(new Error("stale"), {lastTs: st.ts});
     S.lastOk = Date.now(); S.err = null; hideErr();
@@ -103,19 +159,26 @@ const px = v => {
   const z = Math.ceil(-Math.log10(v)) - 1, digits = Math.round(v * Math.pow(10, z + 4)).toString().slice(0, 4);
   return "$0.0" + String(z).split("").map(d => SUB[+d]).join("") + digits;   // e.g. $0.0₈6323
 };
-const hm = ts => ts ? new Date(ts * 1000).toLocaleTimeString("es-MX", {hour: "2-digit", minute: "2-digit"}) : "";
+const hm = ts => ts ? new Date(ts * 1000).toLocaleTimeString("es-MX", {hour: "2-digit", minute: "2-digit", hour12: false, timeZone: TZ}) : "";
+const hms = ts => ts ? new Date(ts * 1000).toLocaleTimeString("es-MX", {hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: TZ}) : "";
 const age = ts => { if (!ts) return "—"; const m = (Date.now() / 1000 - ts) / 60; return m < 60 ? Math.floor(m) + " min" : (m / 60).toFixed(0) + " h"; };
 const paperPill = () => S.state && S.state.mode === "PAPER" ? `<span class="pill paper">PAPER</span>` : "";
+const TZ = "America/Hermosillo";
 function todayPnl(st) {
-  if (!st || st.balance == null || !st.multiplier) return {pct: st && st.todayPct, usd: null};
-  const start = st.balance / st.multiplier;
-  return {pct: st.todayPct, usd: st.balance - start};
+  if (!st) return {pct: null, usd: null};
+  const pct = st.todayPct;
+  if (st.todayUsd != null && Number.isFinite(Number(st.todayUsd))) return {pct, usd: Number(st.todayUsd)};
+  if (st.startBalance != null && st.balance != null) return {pct, usd: Number(st.balance) - Number(st.startBalance)};
+  return {pct, usd: null};
+}
+function freshSecs(ts) { return ts == null ? null : Math.max(0, Math.round(Date.now() / 1000 - ts)); }
+function freshText(ts) {
+  const s = freshSecs(ts); if (s == null) return "";
+  return s < 60 ? `actualizado hace ${s}s` : s < 3600 ? `actualizado hace ${Math.floor(s / 60)} min` : `actualizado hace ${(s / 3600).toFixed(0)} h`;
 }
 function updatedLine(st) {
   if (!st || !st.ts) return "";
-  const s = Math.max(0, Math.round(Date.now() / 1000 - st.ts));
-  const txt = s < 60 ? `hace ${s}s` : s < 3600 ? `hace ${Math.floor(s / 60)} min` : `hace ${(s / 3600).toFixed(0)} h`;
-  return `<div class="updated">Actualizado ${txt}</div>`;
+  return `<div class="fresh" id="fresh">${freshText(st.ts)}</div>`;
 }
 
 function sourceOf(o) {
@@ -178,14 +241,15 @@ function render() {
 }
 function linkScreen(v) {
   if ($("#linkcode")) return;   // don't wipe what he is typing on the next poll
-  v.innerHTML = `<div class="title">Chucho Desk</div>
-    <div class="empty">Este teléfono todavía no está conectado. Pega aquí el enlace privado que te mandó Chucho por Telegram (o solo el código) y dale Conectar.</div>
-    <form id="linkform" class="rows" style="padding:14px;margin-top:12px" autocomplete="off">
-      <input id="linkcode" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://…/chucho-desk/?d=…"
-        style="width:100%;box-sizing:border-box;padding:12px;border-radius:12px;border:1px solid #333;background:#111;color:#fff;font-size:16px">
-      <button class="btn" type="submit" style="margin-top:10px;width:100%">Conectar</button>
-      <div id="linkmsg" class="sub" style="margin-top:8px"></div>
-    </form>`;
+  v.innerHTML = `<div class="connect" id="linkbox">
+      <h1>Chucho Desk</h1>
+      <p>Este teléfono todavía no está conectado. Pega el enlace privado que te mandó Chucho por Telegram (o solo el código) y dale Conectar.</p>
+      <form id="linkform" autocomplete="off">
+        <input id="linkcode" type="text" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://…/chucho-desk/?d=…">
+        <button class="btn" type="submit">Conectar</button>
+        <div id="linkmsg" class="sub" style="margin-top:8px"></div>
+      </form>
+    </div>`;
   $("#linkform").onsubmit = e => {
     e.preventDefault();
     const c = parseCode($("#linkcode").value);
@@ -317,50 +381,210 @@ function sigRow(s) {
 }
 
 // ---- screens ----
+function liveSrc() { return S.live || S.state || {}; }
+
+function headBar(title, backHref) {
+  const dark = (store.get("desk_theme") || "light") === "dark";
+  return `<div class="live-head">
+    <a class="back-arr" href="${backHref || "#/home"}" aria-label="Atrás">‹</a>
+    <div class="live-title">${esc(title)} <span class="live-dot" aria-hidden="true"></span></div>
+    <div class="live-tools">
+      <span class="live-badge"><i></i> EN VIVO</span>
+      <button class="theme-btn" id="themebtn" type="button" aria-label="Cambiar tema">${dark ? "☀️" : "🌙"}</button>
+    </div>
+  </div>`;
+}
+
+function tickerHtml(items) {
+  const arr = items || [];
+  if (!arr.length) return "";
+  const badge = t => {
+    const chg = t.chg;
+    const cls = chg == null ? "" : (chg >= 0 ? "up" : "down");
+    return `<span class="tbadge ${t.kind || ""}">${esc(t.symbol || "")}${chg == null ? "" : ` <span class="chg ${cls}">${pct(chg)}</span>`}</span>`;
+  };
+  const row = arr.map(badge).join("");
+  return `<div class="ticker" aria-hidden="true"><div class="ticker-track">${row}${row}</div></div>`;
+}
+
+function tradesTable(rows) {
+  const list = rows || [];
+  if (!list.length) return `<div class="empty">Sin trades abiertos ni dips en espera</div>`;
+  const line = r => {
+    const up = r.pnlPct == null ? null : r.pnlPct >= 0;
+    const dot = up == null ? "var(--t2)" : (up ? "var(--green)" : "var(--red)");
+    const href = r.mint ? `#/coin/${r.mint}` : "#/home";
+    const lane = r.chain || r.lane || "";
+    return `<a class="tf-row" href="${href}">
+      <div class="tf-main">
+        <span class="tf-val ${up == null ? "" : (up ? "up" : "down")}">${r.value == null ? "—" : usd(r.value)}</span>
+        <span class="tf-dot" style="background:${dot}"></span>
+        <div class="tf-meta">
+          <div class="tf-sym">${esc(r.symbol || "")}</div>
+          <div class="tf-st">${esc(r.status || "")}${lane ? " · " + esc(lane) : ""}</div>
+        </div>
+      </div>
+      <div class="tf-size">${r.size == null ? "—" : usd(r.size)}</div>
+    </a>`;
+  };
+  return `<div class="tf-wrap"><div class="tf-head"><span>valor</span><span style="text-align:right">metido</span></div>${list.map(line).join("")}</div>`;
+}
+
+function agentsGrid(agents, running, ops) {
+  const list = agents || [];
+  const card = a => {
+    const lines = (a.lines || []).map((ln, i) => i === 0 ? esc(ln) : `<span class="dim">${esc(ln)}</span>`).join("\n");
+    return `<div class="agcard">
+      <div class="ag-top">${statusDot(a)}<span class="skill ${esc(a.tone || "gray")}">${esc(a.skill || "")}</span><span class="ag-alias">${esc(a.alias || a.name || "")}</span></div>
+      <div class="ag-lines">${esc(a.action || "En espera")}\n${lines}</div>
+    </div>`;
+  };
+  return `<div class="agents-head"><h2>${list.length} agentes · en vivo</h2>
+    <div class="agents-ops">🟢 ${running} corriendo · ${ops == null ? "—" : Number(ops).toFixed(1)} ops/min</div></div>
+    <div class="agrid">${list.map(card).join("")}</div>`;
+}
+
+function termFeed(feed, sinceTs) {
+  const list = (feed || []).slice(0, 40);
+  if (!list.length) return `<div class="term"><div class="term-h">actividad</div><div class="sub">Sin eventos todavía</div></div>`;
+  const rows = list.map(it => {
+    const fresh = sinceTs && it.ts && it.ts > sinceTs;
+    return `<div class="term-row ${esc(it.tone || it.kind || "")}${fresh ? " fresh-row" : ""}"><span class="term-ts">${hms(it.ts)}</span><span>${esc(it.text || "")}</span></div>`;
+  }).join("");
+  return `<div class="term"><div class="term-h"><span>actividad</span><span>en vivo</span></div>${rows}</div>`;
+}
+
+function posLive(p) {
+  const chg = p.pnlPct != null ? p.pnlPct : ((p.last != null && p.entry) ? (p.last / p.entry - 1) * 100 : null);
+  const href = p.mint ? `#/coin/${p.mint}` : "#/home";
+  const trader = p.trader || p.copyFrom;
+  return `<a class="pos-live" href="${href}">
+    <div class="pos-top">
+      <div class="pos-name">${esc(p.symbol || p.name || "")}${laneTag(p.lane)}${trader ? `<span class="tag copy">espejo · ${esc(trader)}</span>` : ""}</div>
+      <canvas class="spark" data-spark="${esc(JSON.stringify(p.spark || []))}" data-up="${chg == null ? "" : (chg >= 0 ? "1" : "0")}"></canvas>
+      <div class="pos-pnl ${chg == null ? "" : chg >= 0 ? "up" : "down"}">${chg == null ? "—" : pct(chg)}</div>
+    </div>
+    <div class="pos-size">${usd(p.value != null ? p.value : p.size)} · ${p.status ? esc(p.status) : ""}</div>
+    <div class="pos-metrics">
+      <div><span>Entrada</span><b>${px(p.entry)}</b></div>
+      <div><span>Stop</span><b class="down">${px(p.stopPrice)}</b></div>
+      <div><span>Objetivo</span><b class="up">${px(targetOf(p))}</b></div>
+    </div>
+  </a>`;
+}
+
+function dipsPanel(dips) {
+  const list = dips || [];
+  if (!list.length) return "";
+  const rows = list.map(d => `<div class="dip-row"><div><b>${esc(d.symbol || d.name || "")}</b>
+    <div class="sub">${esc(d.status || "esperando dip")}${d.trader ? " · " + esc(d.trader) : ""}${d.dropPct != null ? " · −" + d.dropPct + "% / " + d.needPct + "%" : ""}</div></div>
+    <div>${d.last != null ? px(d.last) : "—"}</div></div>`).join("");
+  return `<div class="section"><h2>Esperando dip</h2></div><div class="panel">${rows}</div>`;
+}
+
+function mirrorPanel(rows) {
+  const list = rows || [];
+  if (!list.length) return "";
+  const line = t => {
+    const last = t.last;
+    if (!last) return `<div class="mir-row"><b>${esc(t.trader)}</b><span class="sub">sin movimiento detectado</span></div>`;
+    const age = last.txAge != null ? ` · tx hace ${last.txAge}s` : (last.ts ? " · " + hm(last.ts) : "");
+    return `<div class="mir-row"><div><b>${esc(t.trader)}</b><div class="sub">${esc(last.side || "")} ${esc(last.symbol || "")}${age}</div></div><span class="sub">${esc(last.reason || "")}</span></div>`;
+  };
+  return `<div class="section"><h2>Espejo · top 5</h2></div><div class="panel">${list.map(line).join("")}</div>`;
+}
+
+function recapHtml(r) {
+  if (!r) return "";
+  const profit = r.profit;
+  const cls = profit == null ? "" : (profit >= 0 ? "up" : "down");
+  const best = r.best ? `${esc(r.best.symbol || r.best.name)} · ${usd(r.best.pnlUsd)}` : "—";
+  const worst = r.worst ? `${esc(r.worst.symbol || r.worst.name)} · ${usd(r.worst.pnlUsd)}` : "—";
+  return `<div class="sheet-card" role="dialog" aria-labelledby="recap-title">
+    <div class="sheet-handle"></div>
+    <div class="section" style="margin-top:0"><h2 id="recap-title">${esc(r.label || "Resumen de la sesión")}</h2>
+      <button type="button" id="sheet-close" class="sub">Cerrar</button></div>
+    <div class="sub">Inicial ${usd(r.initial)}</div>
+    <div class="sheet-x"><div class="balance num" style="height:auto;font-size:44px">${usd(r.result)}</div>
+      <span class="mult-dark">${Number(r.multiplier || 1).toFixed(2)}x</span></div>
+    <div class="amt ${cls}" style="font:700 22px var(--display)">${profit == null ? "—" : usd(profit)} <span>${pct(r.profitPct)}</span></div>
+    <div class="sheet-grid">
+      <div><span>Trades</span><b>${r.trades || 0}</b><div class="sub">${r.wins || 0}W · ${r.losses || 0}L</div></div>
+      <div><span>Monedas</span><b>${r.coins || 0}</b></div>
+      <div><span>Agentes</span><b>${r.agents || 0}</b></div>
+    </div>
+    <div class="panel" style="margin:0"><div class="dip-row"><span>Mejor</span><b class="up">${best}</b></div>
+      <div class="dip-row"><span>Peor</span><b class="down">${worst}</b></div></div>
+  </div>`;
+}
+
+function openRecap(r, auto) {
+  const box = $("#sheet"); if (!box || !r) return;
+  box.hidden = false; box.innerHTML = recapHtml(r);
+  const close = () => { box.hidden = true; box.innerHTML = ""; };
+  box.onclick = e => { if (e.target === box || e.target.id === "sheet-close") close(); };
+  if (auto) { S.recapShown = String(r.nightStart || ""); store.set("recap_shown", S.recapShown); }
+}
+
+function paintSparks(root) {
+  root.querySelectorAll("canvas.spark").forEach(cv => {
+    let pts = [];
+    try { pts = JSON.parse(cv.dataset.spark || "[]"); } catch (e) {}
+    const up = cv.dataset.up === "" ? null : cv.dataset.up === "1";
+    if (Charts.spark) Charts.spark(cv, pts, up);
+  });
+}
+
 function Home(v) {
-  const st = S.state, unread = Math.max(0, (st.unread || 0) - S.seenPushes);
-  const bal = st.balance == null ? "—" : Number(st.balance).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
-  const running = st.agents.filter(a => a.status === "running").length;
-  const pnl = todayPnl(st);
-  const positions = st.openPositions || [];
-  const sigs = signalItems();
+  const st = S.state || {}, live = S.live || {};
+  const src = Object.keys(live).length ? live : st;
+  const unread = Math.max(0, (st.unread || 0) - S.seenPushes);
+  const balNum = src.balance != null ? src.balance : st.balance;
+  const bal = balNum == null ? "—" : Number(balNum).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  const pnl = todayPnl(src);
+  const initial = src.initial != null ? src.initial : 80;
+  const trades = src.trades != null ? src.trades : ((st.openPositions || []).length);
+  const mult = src.initialMultiple != null ? src.initialMultiple : src.multiplier;
+  const wl = `${src.wins || 0}W–${src.losses || 0}L`;
+  const positions = src.openPositions || st.openPositions || [];
+  const agents = src.agents && src.agents[0] && src.agents[0].skill ? src.agents : null;
+  const running = src.running != null ? src.running : (st.agents || []).filter(a => a.status === "running").length;
   const pauseBanner = st.kill && (st.kill.entriesPaused || st.kill.dailyPause)
     ? `<div class="banner">${st.kill.entriesPaused ? "Entradas pausadas" : ""}${st.kill.entriesPaused && st.kill.dailyPause ? " · " : ""}${st.kill.dailyPause ? esc(st.kill.dailyPause) : ""}</div>`
     : "";
-  v.innerHTML = `<div class="navbar"><a class="avatar" href="#/account">C</a><a class="brand" href="#/agents">Chucho Desk <span class="chev">›</span></a>
-      <button class="iconbtn" id="sbtn" aria-label="Buscar"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
-      <button class="iconbtn" id="bell" aria-label="Notificaciones"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>${unread ? `<i class="dot"></i>` : ""}</button></div>
-    <div class="search" id="search"><input placeholder="Nombre, símbolo o mint" id="q" autocomplete="off"><div id="qres"></div></div>
-    <div class="balance-row"><div class="balance num" id="odo"></div>${paperPill()}</div>
-    <div class="today"><span class="today-amt ${pnl.pct >= 0 ? "up" : "down"}">${pnl.usd == null ? pct(pnl.pct) : usd(pnl.usd)}</span>
-      <span class="${pnl.pct >= 0 ? "up" : "down"}">${pct(pnl.pct)}</span><span class="sub">hoy</span>
-      <span class="pill mult">${Number(st.multiplier).toFixed(2)}×</span></div>
-    ${updatedLine(st)}
+  const equity = (src.equity && src.equity.length >= 2) ? {points: src.equity, start: src.startBalance, marks: (S.chart && S.chart.marks) || []} : S.chart;
+  const ts = src.ts || st.ts;
+  v.innerHTML = `${headBar("Chucho Desk")}
+    ${updatedLine({ts})}
     ${pauseBanner}
+    ${tickerHtml(src.ticker || positions.map(p => ({symbol: p.symbol || p.name, mint: p.mint, kind: "open", chg: p.pnlPct})))}
+    <div class="hero">
+      <div class="balance-row"><div class="balance num" id="odo"></div>${paperPill()}</div>
+      <div class="hero-sub">inicial ${usd(initial)} | ${trades} trades <span class="mult-dark">${mult == null ? "—" : Number(mult).toFixed(2)}x</span></div>
+      <div class="chartbox hero-chart"><canvas id="line"></canvas>${!equity || !(equity.points && equity.points.length >= 2) ? `<div class="chart-empty">Esperando el primer dato de equity</div>` : ""}</div>
+      <div class="hero-pnl"><div class="amt ${pnl.usd == null && pnl.pct == null ? "" : ((pnl.usd != null ? pnl.usd : pnl.pct) >= 0 ? "up" : "down")}">${pnl.usd == null ? "—" : usd(pnl.usd)} <span>${pct(pnl.pct)}</span></div><div class="wl">${esc(wl)}${src.winRate != null ? " · " + src.winRate + "%" : ""}</div></div>
+    </div>
+    ${tradesTable(src.tradesTable || positions.map(p => ({...p, symbol: p.symbol || p.name, chain: p.lane})))}
+    ${agents ? agentsGrid(agents, running, src.opsPerMin) : `<div class="section"><h2>Agentes · ${running} en marcha</h2></div><div class="carousel">${(st.agents || []).map(a => card(a, false)).join("")}</div>`}
+    ${termFeed(src.feed, S.prevFeedTs)}
     <div class="section"><h2>Posiciones · ${positions.length}</h2></div>
-    ${positions.length ? positions.map(posCard).join("") : `<div class="empty" style="padding:16px">Sin posiciones abiertas</div>`}
-    <div class="chartbox"><canvas id="line"></canvas>${!S.chart || S.chart.points.length < 2 || !S.chart.marks.length ? `<div class="chart-empty">Esperando el primer trade</div>` : ""}</div>
-    <div class="ranges">${["LIVE", "1H", "4H", "1D", "1W", "ALL"].map(r => `<button class="${r === S.range ? "on" : ""}" data-r="${r}">${r}</button>`).join("")}</div>
-    <div class="section"><h2>Señales</h2></div>
-    <div class="rows">${sigs.length ? sigs.map(sigRow).join("") : `<div class="empty">Sin señales recientes</div>`}</div>
-    <div class="section"><h2>Agentes · ${running} en marcha</h2></div>
-    <div class="carousel">${st.agents.map(a => card(a, false)).join("")}</div>
-    <div class="section"><h2>Actividad</h2><a href="#/activity">Ver todo</a></div>
-    <div class="rows">${(S.activity.rows || []).slice(0, 5).map(rowHtml).join("") || `<div class="empty">Nada todavía esta noche</div>`}</div>`;
-  odometer($("#odo"), "$" + bal);
-  if (S.chart) Charts.line($("#line"), S.chart);
+    ${positions.length ? positions.map(posLive).join("") : `<div class="empty" style="padding:16px">Sin posiciones abiertas</div>`}
+    ${dipsPanel(src.dips)}
+    ${mirrorPanel(src.mirror)}
+    <button type="button" class="recap-btn" id="recapbtn">${esc((src.recap && src.recap.label) || "Resumen de la sesión")}</button>`;
+  const prev = S.prevOdo;
+  S.prevOdo = "$" + bal;
+  if (prev && prev !== S.prevOdo) { odometer($("#odo"), prev); requestAnimationFrame(() => odometer($("#odo"), S.prevOdo)); }
+  else odometer($("#odo"), S.prevOdo);
+  if (equity && equity.points) Charts.line($("#line"), equity);
   paintRings(v);
-  v.querySelectorAll(".ranges button").forEach(b => b.onclick = async () => { S.range = b.dataset.r; try { S.chart = await get("chart", S.range); } catch (e) {} render(); });
-  $("#sbtn").onclick = () => { $("#search").classList.toggle("on"); $("#q").focus(); };
-  $("#bell").onclick = () => { S.seenPushes = st.unread || 0; store.set("seen", String(S.seenPushes)); location.hash = "#/activity"; };
-  $("#q").oninput = async e => {
-    const q = e.target.value.trim().toLowerCase(); if (!q) { $("#qres").innerHTML = ""; return; }
-    let list = []; try { const c = TOKEN ? null : await get("coins"); list = c ? c.coins : []; } catch (_) {}
-    (S.activity.rows || []).forEach(r => { if (r.mint && !list.find(x => x.mint === r.mint)) list.push({mint: r.mint, name: (r.title || "").split(" ").slice(1).join(" ")}); });
-    const hits = list.filter(c => (c.name || "").toLowerCase().includes(q) || c.mint.toLowerCase() === q).slice(0, 8);
-    $("#qres").innerHTML = `<div class="rows" style="margin-top:8px">${hits.map(h => `<a class="row" href="#/coin/${h.mint}"><div class="tx"><div class="tt">${esc(h.name)}</div><div class="st">${esc(h.mint)}</div></div></a>`).join("") || `<div class="empty">Sin coincidencias</div>`}</div>`;
-  };
+  paintSparks(v);
+  const tb = $("#themebtn"); if (tb) tb.onclick = toggleTheme;
+  const rb = $("#recapbtn"); if (rb) rb.onclick = () => openRecap(src.recap);
+  if (src.recap && src.recap.autoOpen && S.recapShown !== String(src.recap.nightStart || "")) openRecap(src.recap, true);
+  S.prevFeedTs = Date.now() / 1000;
 }
+
 function Agents(v) {
   v.innerHTML = `<div class="title">Agentes</div><div class="agents-list">${S.state.agents.map(a => card(a, true)).join("")}</div>`;
   paintRings(v);
@@ -556,5 +780,6 @@ async function Auditor(v, mint) {
 }
 
 refresh(); setInterval(refresh, POLL * 1000);
+setInterval(() => { const el = document.getElementById('fresh'); const ts = (S.live && S.live.ts) || (S.state && S.state.ts); if (el && ts) el.textContent = freshText(ts); }, 1000);
 if ("serviceWorker" in navigator && location.protocol === "https:") navigator.serviceWorker.register("sw.js", {updateViaCache: "none"}).then(r => r.update && r.update()).catch(() => {});
 })();

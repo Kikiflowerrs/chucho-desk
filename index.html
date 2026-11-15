@@ -5,29 +5,34 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Chucho">
 <meta name="application-name" content="Chucho">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#FFFFFF">
 <meta name="referrer" content="no-referrer">
 <meta name="description" content="Chucho Desk · monitor del desk PAPER">
 <title>Chucho Desk</title>
-<link rel="manifest" href="manifest.json?v=4">
+<link rel="manifest" href="manifest.json?v=5">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" sizes="180x180">
 <link rel="icon" type="image/png" href="icons/favicon-32.png" sizes="32x32">
 <link rel="icon" type="image/png" href="icons/icon-192.png" sizes="192x192">
-<link rel="stylesheet" href="app.css?v=4">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css?v=5">
 </head>
 <body>
 <div id="err" class="err" hidden></div>
+<div id="toasts"></div>
 <main id="view"></main>
 <nav class="tabbar" id="tabbar">
-  <button data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Inicio</span></button>
+  <button data-tab="home" class="on"><svg viewBox="0 0 24 24"><path d="M5 12h14M5 12l4-4M5 12l4 4"/><circle cx="18" cy="12" r="2"/></svg><span>En vivo</span></button>
   <button data-tab="agents"><svg viewBox="0 0 24 24"><circle cx="7" cy="8" r="3"/><circle cx="17" cy="8" r="3"/><path d="M2 20c0-3 2.5-5 5-5s5 2 5 5M12 20c0-3 2.5-5 5-5s5 2 5 5"/></svg><span>Agentes</span></button>
   <button data-tab="activity"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>Actividad</span></button>
   <button data-tab="account"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg><span>Cuenta</span></button>
 </nav>
 <div id="toast" class="toast" hidden></div>
+<div id="sheet" class="sheet" hidden></div>
 <div id="confirm" class="confirm" hidden>
   <div class="confirm-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
     <div class="confirm-title" id="confirm-title"></div>
@@ -38,7 +43,7 @@
     </div>
   </div>
 </div>
-<script src="chart.js?v=4"></script>
-<script src="app.js?v=4"></script>
+<script src="chart.js?v=5"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

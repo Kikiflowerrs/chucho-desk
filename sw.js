@@ -1,8 +1,8 @@
-// Service worker v4: offline shell only, never touches the data path, never rewrites the page URL (the ?d= query passes
+// Service worker v5: offline shell only, never touches the data path, never rewrites the page URL (the ?d= query passes
 // through untouched), and never hands Safari a redirected response ("Response served by service worker has redirections").
 // Web Push handlers exist for plan A; this desk runs plan B (Telegram only).
-const CACHE = "desk-v4";
-const SHELL = ["index.html", "app.css?v=4", "app.js?v=4", "chart.js?v=4", "manifest.json?v=4",
+const CACHE = "desk-v5";
+const SHELL = ["index.html", "app.css?v=5", "app.js?v=5", "chart.js?v=5", "manifest.json?v=5",
   "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png", "icons/favicon-32.png"];
 self.addEventListener("install", e => {
   self.skipWaiting();

@@ -108,6 +108,7 @@ async function get(kind, arg) {
     url = `./d/${encodeURIComponent(DP)}/` + {state: "state.json", chart: "chart.json", activity: "activity.json", account: "account.json",
            live: "live.json", coin: `coin/${arg}.json`, audit: `audit/${arg}.json`, coins: "coins.json", review: "review.json"}[kind];
   } else throw new Error("not linked");
+  if (!TOKEN) url += (url.includes("?") ? "&" : "?") + "r=" + Date.now();
   const r = await fetch(url, opts);
   if (r.status === 404 && (kind === "coin" || kind === "audit" || kind === "review" || kind === "live")) return null;
   if (!r.ok) throw new Error("HTTP " + r.status);
@@ -163,6 +164,12 @@ const hm = ts => ts ? new Date(ts * 1000).toLocaleTimeString("es-MX", {hour: "2-
 const hms = ts => ts ? new Date(ts * 1000).toLocaleTimeString("es-MX", {hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false, timeZone: TZ}) : "";
 const age = ts => { if (!ts) return "—"; const m = (Date.now() / 1000 - ts) / 60; return m < 60 ? Math.floor(m) + " min" : (m / 60).toFixed(0) + " h"; };
 const paperPill = () => S.state && S.state.mode === "PAPER" ? `<span class="pill paper">PAPER</span>` : "";
+function fmtMult(m) {
+  if (m == null || !Number.isFinite(Number(m))) return "—";
+  const n = Number(m), two = n.toFixed(2);
+  if (two === "1.00" && Math.abs(n - 1) >= 0.00005) return n.toFixed(3) + "x";
+  return two + "x";
+}
 const TZ = "America/Hermosillo";
 function todayPnl(st) {
   if (!st) return {pct: null, usd: null};
@@ -506,7 +513,7 @@ function recapHtml(r) {
       <button type="button" id="sheet-close" class="sub">Cerrar</button></div>
     <div class="sub">Inicial ${usd(r.initial)}</div>
     <div class="sheet-x"><div class="balance num" style="height:auto;font-size:44px">${usd(r.result)}</div>
-      <span class="mult-dark">${Number(r.multiplier || 1).toFixed(2)}x</span></div>
+      <span class="mult-dark">${fmtMult(r.multiplier)}</span></div>
     <div class="amt ${cls}" style="font:700 22px var(--display)">${profit == null ? "—" : usd(profit)} <span>${pct(r.profitPct)}</span></div>
     <div class="sheet-grid">
       <div><span>Trades</span><b>${r.trades || 0}</b><div class="sub">${r.wins || 0}W · ${r.losses || 0}L</div></div>
@@ -560,7 +567,7 @@ function Home(v) {
     ${tickerHtml(src.ticker || positions.map(p => ({symbol: p.symbol || p.name, mint: p.mint, kind: "open", chg: p.pnlPct})))}
     <div class="hero">
       <div class="balance-row"><div class="balance num" id="odo"></div>${paperPill()}</div>
-      <div class="hero-sub">inicial ${usd(initial)} | ${trades} trades <span class="mult-dark">${mult == null ? "—" : Number(mult).toFixed(2)}x</span></div>
+      <div class="hero-sub">inicial ${usd(initial)} | ${trades} trades <span class="mult-dark">${fmtMult(mult)}</span></div>
       <div class="chartbox hero-chart"><canvas id="line"></canvas>${!equity || !(equity.points && equity.points.length >= 2) ? `<div class="chart-empty">Esperando el primer dato de equity</div>` : ""}</div>
       <div class="hero-pnl"><div class="amt ${pnl.usd == null && pnl.pct == null ? "" : ((pnl.usd != null ? pnl.usd : pnl.pct) >= 0 ? "up" : "down")}">${pnl.usd == null ? "—" : usd(pnl.usd)} <span>${pct(pnl.pct)}</span></div><div class="wl">${esc(wl)}${src.winRate != null ? " · " + src.winRate + "%" : ""}</div></div>
     </div>

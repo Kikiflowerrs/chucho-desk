@@ -1,18 +1,23 @@
 // hosted static copies refresh every ~2 min + deploy lag, local refreshes every 15s
 const STALE_S = location.hostname.endsWith('github.io') ? 420 : 90;
-// Grok Bot desk app. Plain JS. Plan A: #t=APP_TOKEN -> /api/*. Plan B: #d=DATA_PATH -> ./d/{DATA_PATH}/*.json (polled every 15s).
+// Chucho Desk app. Plain JS. Plan A: #t=APP_TOKEN -> /api/*. Plan B: #d=DATA_PATH -> ./d/{DATA_PATH}/*.json (polled every 15s).
 (() => {
 "use strict";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// ---- credentials from the fragment, kept in localStorage, fragment cleaned ----
+// ---- credentials from the fragment (#d= / #t=) or the query (?d= / ?t=, for in-app browsers that drop fragments);
+// kept in localStorage, then stripped from the address bar ----
 (function boot() {
-  const h = location.hash.slice(1), p = new URLSearchParams(h.includes("=") ? h : "");
-  if (p.get("t")) { localStorage.setItem("desk_t", p.get("t")); localStorage.removeItem("desk_d"); }
-  if (p.get("d")) { localStorage.setItem("desk_d", p.get("d")); localStorage.removeItem("desk_t"); }
-  if (p.get("t") || p.get("d")) history.replaceState(null, "", location.pathname + "#/home");
+  const h = location.hash.slice(1), hp = new URLSearchParams(h.includes("=") ? h : ""), qp = new URLSearchParams(location.search);
+  const t = hp.get("t") || qp.get("t"), d = hp.get("d") || qp.get("d");
+  if (t) { localStorage.setItem("desk_t", t); localStorage.removeItem("desk_d"); }
+  if (d) { localStorage.setItem("desk_d", d); localStorage.removeItem("desk_t"); }
+  if (t || d) {
+    qp.delete("t"); qp.delete("d"); const rest = qp.toString();
+    history.replaceState(null, "", location.pathname + (rest ? "?" + rest : "") + "#/home");
+  }
 })();
 const TOKEN = localStorage.getItem("desk_t"), DP = localStorage.getItem("desk_d");
 const PLAN = TOKEN ? "A" : "B";
@@ -105,7 +110,7 @@ document.querySelectorAll(".tabbar button").forEach(b => b.onclick = () => { loc
 function render() {
   const r = route(), v = $("#view");
   document.querySelectorAll(".tabbar button").forEach(b => b.classList.toggle("on", b.dataset.tab === r.name));
-  if (!TOKEN && !DP) { v.innerHTML = `<div class="title">Grok Bot</div><div class="empty">Open the desk link once (it ends in #d=…) to connect this phone.</div>`; return; }
+  if (!TOKEN && !DP) { v.innerHTML = `<div class="title">Chucho Desk</div><div class="empty">Open the desk link once (it has ?d=… or #d=…) to connect this phone.</div>`; return; }
   if (!S.loaded) { v.innerHTML = skeleton(r.name); return; }
   ({home: Home, agents: Agents, activity: Activity, account: Account, coin: Coin, audit: Auditor}[r.name] || Home)(v, r.arg);
 }
@@ -174,7 +179,7 @@ function Home(v) {
   const st = S.state, unread = Math.max(0, (st.unread || 0) - S.seenPushes);
   const bal = st.balance == null ? "—" : Number(st.balance).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
   const running = st.agents.filter(a => a.status === "running").length;
-  v.innerHTML = `<div class="navbar"><a class="avatar" href="#/account">K</a><a class="brand" href="#/agents">Grok Bot <span class="chev">›</span></a>
+  v.innerHTML = `<div class="navbar"><a class="avatar" href="#/account">K</a><a class="brand" href="#/agents">Chucho Desk <span class="chev">›</span></a>
       <button class="iconbtn" id="sbtn" aria-label="Search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg></button>
       <button class="iconbtn" id="bell" aria-label="Notifications"><svg viewBox="0 0 24 24"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>${unread ? `<i class="dot"></i>` : ""}</button></div>
     <div class="search" id="search"><input placeholder="Name, symbol or mint" id="q"><div id="qres"></div></div>
@@ -276,7 +281,7 @@ async function Auditor(v, mint) {
     <a class="btn gray" href="${esc(a.coin_url)}" target="_blank" rel="noopener">Open on FOMO</a>`;
   const discs = [...v.querySelectorAll(".disc")], beam = $("#beam"), H = 22;
   const finish = () => {
-    $("#verdict").innerHTML = a.rejected ? `<b class="down">Rejected · ${esc(a.reason)}</b><div class="sub">Grok Bot won't buy ${name}</div>`
+    $("#verdict").innerHTML = a.rejected ? `<b class="down">Rejected · ${esc(a.reason)}</b><div class="sub">Chucho won't buy ${name}</div>`
       : a.passedCount === 8 ? `<b class="up">Cleared · 8/8 parts</b><div class="sub">${a.sentSize != null ? "Sent to Executor · " + usd(a.sentSize) : "Sent to Executor"}</div>` : "";
     beam.style.display = "none";
   };
